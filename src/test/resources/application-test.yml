@@ -1,0 +1,9 @@
+spring:
+  datasource:
+    url: jdbc:h2:mem:test    # OK — genuine override, different from base
+
+server:
+  port: 8080                 # VIOLATION (R2/R4/R5) — identical to application.yml's value
+
+app:
+  testOnlyFlag: true         # VIOLATION (R1/R3/R5) — not present in application.yml at all

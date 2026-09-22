@@ -1,0 +1,15 @@
+app:
+  name: prod-app                     # OK — genuine override, different from base's "base-app"
+  greeting: "Hello, ${app.name}!"    # OK — literal text is IDENTICAL to application.yml's, but resolves
+                                      #      to "Hello, prod-app!" here vs "Hello, base-app!" in the base
+                                      #      file (because app.name is overridden too), so it's a real
+                                      #      override, not a duplicate. Demonstrates R2/R4 comparing
+                                      #      resolved values, not raw text.
+  tags:
+    - core                           # VIOLATION (R2/R4/R5) — identical to application.yml's tags[0]
+    - production                     # OK — genuine override, different from base's tags[1] "stable"
+  secretRef: vault://prod/secret     # VIOLATION (R1/R3/R5) — not present in application.yml at all
+
+spring:
+  datasource:
+    url: jdbc:pg://prod/db           # OK — genuine override, different from base

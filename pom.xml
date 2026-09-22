@@ -1,0 +1,117 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <groupId>com.example</groupId>
+  <artifactId>yaml-config-validator</artifactId>
+  <version>1.0.0</version>
+  <packaging>jar</packaging>
+
+  <name>yaml-config-validator</name>
+  <description>Standalone Maven project demonstrating YamlConfigStructureTest against sample application*.yml files</description>
+
+  <properties>
+    <maven.compiler.release>21</maven.compiler.release>
+    <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+
+    <!-- Spring Boot BOM version — adjust to whatever current 3.5.x patch you use -->
+    <spring-boot.version>3.5.5</spring-boot.version>
+
+    <!-- Override Spring Boot's managed JUnit 5.x with JUnit 6 -->
+    <junit-jupiter.version>6.0.0</junit-jupiter.version>
+    <junit-platform.version>6.0.0</junit-platform.version>
+
+    <maven-surefire-plugin.version>3.5.2</maven-surefire-plugin.version>
+  </properties>
+
+  <!-- Import the Spring Boot BOM for dependency versions without inheriting a parent POM,
+       so nothing here assumes this is a runnable Spring Boot application. -->
+  <dependencyManagement>
+    <dependencies>
+      <dependency>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-dependencies</artifactId>
+        <version>${spring-boot.version}</version>
+        <type>pom</type>
+        <scope>import</scope>
+      </dependency>
+    </dependencies>
+  </dependencyManagement>
+
+  <dependencies>
+    <!-- JUnit Jupiter (pinned to 6.0.0 via the properties above), AssertJ, Mockito, etc. -->
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-test</artifactId>
+      <scope>test</scope>
+    </dependency>
+
+    <!-- Needed directly: the test parses YAML itself (via SnakeYAML) to detect explicit
+         null values, which Spring's own YamlPropertySourceLoader silently turns into "".
+         Declared explicitly (version managed by the BOM above) so it's present even in
+         a bare test-only module. -->
+    <dependency>
+      <groupId>org.yaml</groupId>
+      <artifactId>snakeyaml</artifactId>
+      <scope>test</scope>
+    </dependency>
+  </dependencies>
+
+  <build>
+    <plugins>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-compiler-plugin</artifactId>
+        <configuration>
+          <release>${maven.compiler.release}</release>
+        </configuration>
+      </plugin>
+
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-surefire-plugin</artifactId>
+        <version>${maven-surefire-plugin.version}</version>
+        <configuration>
+          <!-- Demo convenience: let `mvn test` finish with exit code 0 and print every
+               failure below, instead of stopping the console output at the first
+               red build. Surefire always runs every test method regardless of this
+               flag — this only affects whether the overall build is marked failed
+               afterwards. Set to false (or remove) for real CI gating. -->
+          <testFailureIgnore>true</testFailureIgnore>
+          <trimStackTrace>false</trimStackTrace>
+          <useFile>false</useFile>
+        </configuration>
+      </plugin>
+    </plugins>
+  </build>
+
+  <!-- These profiles are a build-time convenience (e.g. controlling packaging or
+       spring.profiles.active for an eventual runnable artifact). The test class itself
+       does its own filesystem discovery of application-*.yml files and does not depend
+       on which Maven profile is active. -->
+  <profiles>
+    <profile>
+      <id>dev</id>
+      <properties>
+        <spring.profiles.active>dev</spring.profiles.active>
+      </properties>
+    </profile>
+    <profile>
+      <id>test</id>
+      <activation>
+        <activeByDefault>true</activeByDefault>
+      </activation>
+      <properties>
+        <spring.profiles.active>test</spring.profiles.active>
+      </properties>
+    </profile>
+    <profile>
+      <id>prod</id>
+      <properties>
+        <spring.profiles.active>prod</spring.profiles.active>
+      </properties>
+    </profile>
+  </profiles>
+</project>

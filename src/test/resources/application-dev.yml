@@ -1,0 +1,12 @@
+app:
+  timeout: 60          # OK — genuine override, different from base's 30
+  newDevOnlyKey: x     # VIOLATION (R1/R3/R5) — not present in application.yml at all
+  debugFlag: null      # Edge case — explicit null must be skipped entirely, no failure
+
+logging:
+  level:
+    root: INFO         # VIOLATION (R2/R4/R5) — identical to application.yml's value
+
+spring:
+  datasource:
+    url: jdbc:h2:mem:dev   # OK — genuine override, different from base
