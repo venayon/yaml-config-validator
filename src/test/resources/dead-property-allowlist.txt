@@ -1,0 +1,5 @@
+# Keys read reflectively by libraries or referenced only via YAML placeholders.
+# One key per line. Blank lines and lines starting with '#' are ignored.
+#
+# Example:
+# app.dynamic.multi-tenant-config

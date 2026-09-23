@@ -1,6 +1,10 @@
 package com.example.config;
 
-import org.junit.jupiter.api.*;
+import org.junit.jupiter.api.AssertionFailureBuilder;
+import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.TestInstance;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 import org.springframework.boot.env.YamlPropertySourceLoader;
@@ -15,7 +19,14 @@ import org.yaml.snakeyaml.Yaml;
 
 import java.io.IOException;
 import java.io.InputStream;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Stream;
@@ -49,7 +60,10 @@ import java.util.stream.Stream;
  * base file &gt; JVM system properties &gt; OS environment variables. Base/profile
  * content deliberately outranks ambient system state so that a rule's pass/fail
  * outcome is deterministic and does not depend on what happens to be set in the
- * CI machine's environment.</p>
+ * CI machine's environment. An environment created via {@link #newEnvironment()}
+ * additionally resolves unresolvable placeholders leniently (to their own literal
+ * text) rather than throwing, since real config often references values that are
+ * only ever supplied externally at actual application runtime.</p>
  *
  * <p>Every rule collects <b>all</b> violations for its scope (one profile, for
  * R1–R4; every profile, for R5) before failing, rather than throwing on the
@@ -88,7 +102,7 @@ class YamlConfigStructureTest {
         Set<String> baseNullPaths = computeExplicitNullPaths(baseResource);
         baseKeys = collectKeys(baseSources, baseNullPaths);
 
-        StandardEnvironment baseEnv = new StandardEnvironment();
+        StandardEnvironment baseEnv = newEnvironment();
         layerOnTop(baseEnv, baseSources);
         baseResolved = resolveAll(baseEnv, baseKeys);
 
@@ -104,7 +118,7 @@ class YamlConfigStructureTest {
             Set<String> keys = collectKeys(profileSources, profileNullPaths);
             profileKeys.put(profile, keys);
 
-            StandardEnvironment profileEnv = new StandardEnvironment();
+            StandardEnvironment profileEnv = newEnvironment();
             layerOnTop(profileEnv, baseSources);    // lower priority
             layerOnTop(profileEnv, profileSources); // higher priority (layered on top of base)
             profileResolved.put(profile, resolveAll(profileEnv, keys));
@@ -278,6 +292,26 @@ class YamlConfigStructureTest {
                 .message(message)
                 .reason(reason)
                 .buildAndThrow();
+    }
+
+    /**
+     * Creates a {@link StandardEnvironment} configured for lenient placeholder
+     * resolution: by default, {@code Environment.getProperty(key)} resolves
+     * <em>nested</em> placeholders (e.g. a value like {@code ${docker.local.box}})
+     * using a STRICT resolver — {@code ignoreUnresolvableNestedPlaceholders}
+     * defaults to {@code false} — and throws {@code PlaceholderResolutionException}
+     * if the referenced key isn't defined anywhere in the environment (YAML, system
+     * properties, or OS environment variables). Real-world config commonly contains
+     * placeholders that are only ever supplied externally at actual runtime (CI
+     * variables, Docker-injected values, etc.) and are never meant to resolve during
+     * a structural test. Turning this flag on makes such a placeholder resolve to
+     * its own literal text instead of throwing, so the test can still compare it
+     * like any other value rather than failing the whole suite with a setup error.
+     */
+    private static StandardEnvironment newEnvironment() {
+        StandardEnvironment environment = new StandardEnvironment();
+        environment.setIgnoreUnresolvableNestedPlaceholders(true);
+        return environment;
     }
 
     /** Supplies profile names to the parameterized R1/R2/R3/R4 tests. */
