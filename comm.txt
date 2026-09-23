@@ -1,0 +1,63 @@
+# =============================================================================
+# application.yml — BASE CONFIGURATION
+# =============================================================================
+#
+# RULES (enforced by ApplicationYamlRulesTest):
+#
+#   1. Declare EVERY key here first. Profiles may only override existing keys.
+#   2. Do NOT repeat a key in a profile file if its value is unchanged.
+#   3. Every key in a profile file MUST be a real override (different value).
+#   4. Profile files must NOT introduce new keys — add them here first.
+#   5. No duplicate keys within a single YAML file.
+#   6. No dead keys here — every key must be either overridden by a profile
+#      or referenced in Java code (@Value, @ConfigurationProperties,
+#      environment.getProperty). Otherwise delete it.
+#
+# HOW TO ADD A NEW PROPERTY:
+#   1. Add it here with a default value.
+#   2. If it differs per environment, override it in application-{profile}.yml.
+#   3. Reference it in code — or delete it if unused.
+#
+# HOW TO OVERRIDE PER ENVIRONMENT:
+#   - Override in application-dev.yml / application-test.yml / application-prod.yml
+#   - Value MUST differ from base, otherwise R2 fails.
+#
+# SPRING.CONFIG.IMPORT:
+#   - Imported files own their entire subtree — they replace, not merge.
+#   - Do NOT declare the same subtree in application.yml and an imported file.
+#   - Use "optional:classpath:..." if the file may be absent locally.
+#
+# RUN VALIDATION:
+#   mvn test                    # all rules
+#   mvn test -Dtest=ApplicationYamlRulesTest
+#
+# =============================================================================
+
+# =============================================================================
+# CONFIGURATION RULES (enforced by YamlConfigStructureTest — see PROJECT_CONTEXT.md)
+#
+# 1. Every key used in application-{profile}.yml must be declared here first.
+#    Profile files may NOT introduce keys that don't exist in this file.
+#
+# 2. A key belongs in a profile file ONLY IF its value there differs from
+#    the value here (after resolving any ${...} placeholders). Copying the
+#    same value into a profile file is treated as a duplicate, not an
+#    override — put shared values here, not in every profile.
+#
+# 3. Lists are compared per index ([0], [1], ...). Adding an extra list
+#    item in a profile file counts as a "new key" under rule 1.
+#
+# 4. `key: null` is ignored by these checks entirely (not validated either way).
+#
+# Run `mvn test` to check compliance before committing changes to any
+# application*.yml file.
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# Only put keys here that OVERRIDE application.yml with a genuinely different
+# value. No new keys (must exist in application.yml first). No duplicate
+# values (if it's the same as application.yml, delete it from here).
+# Checked by YamlConfigStructureTest — run `mvn test` before committing.
+# -----------------------------------------------------------------------------
+
+# ... rest of your config
