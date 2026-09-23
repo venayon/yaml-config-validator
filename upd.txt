@@ -1,0 +1,391 @@
+private static void flatten(String prefix, Map<String, Object> map, Map<String, Object> out) {
+    for (Map.Entry<String, Object> e : map.entrySet()) {
+        String key = prefix.isEmpty() ? e.getKey() : prefix + "." + e.getKey();
+        Object v = e.getValue();
+        if (v instanceof Map<?, ?> nested) {
+            flatten(key, cast(nested), out);
+        } else if (v instanceof List<?> list) {
+            for (int i = 0; i < list.size(); i++) {
+                Object item = list.get(i);
+                String ik = key + "[" + i + "]";
+                if (item instanceof Map<?, ?> nestedItem) {
+                    flatten(ik, cast(nestedItem), out);
+                } else if (item != null) {
+                    out.put(ik, item.toString());
+                } else {
+                    out.put(ik, "");  // preserve null as empty string
+                }
+            }
+        } else {
+            // Spring treats null as "" in flattened maps
+            out.put(key, v == null ? "" : v.toString());
+        }
+    }
+}
+
+private boolean isOptionalPlaceholder(String key) {
+    Object v = base.get(key);
+    return v == null || v.toString().isEmpty();
+}
+
+
+package com.example.config;
+
+import org.junit.jupiter.api.AssertionFailureBuilder;
+import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.TestInstance;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.MethodSource;
+import org.springframework.boot.env.YamlPropertySourceLoader;
+import org.springframework.core.env.EnumerablePropertySource;
+import org.springframework.core.env.PropertySource;
+import org.springframework.core.env.StandardEnvironment;
+import org.springframework.core.io.DefaultResourceLoader;
+import org.springframework.core.io.Resource;
+import org.springframework.core.io.ResourceLoader;
+import org.springframework.core.io.support.PathMatchingResourcePatternResolver;
+
+import java.io.IOException;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Set;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+import java.util.stream.Stream;
+
+@TestInstance(TestInstance.Lifecycle.PER_CLASS)
+@DisplayName("YAML configuration structural rules")
+class YamlConfigStructureTest {
+
+    private static final String BASE_RESOURCE = "application.yml";
+    private static final Pattern PROFILE_FILE_PATTERN = Pattern.compile("application-([^/]+)\\.yml$");
+
+    private final YamlPropertySourceLoader loader = new YamlPropertySourceLoader();
+    private final ResourceLoader resourceLoader = new DefaultResourceLoader();
+
+    private List<String> profiles;
+
+    /** Keys present in application.yml (null/~/empty leaves included — see class Javadoc). */
+    private Set<String> baseKeys;
+
+    /** profile -> keys present in that profile file (null/~/empty leaves included). */
+    private Map<String, Set<String>> profileKeys;
+
+    /** key -> resolved value, using base file + system/env only (no profile). */
+    private Map<String, String> baseResolved;
+
+    /** profile -> (key -> resolved value), using profile + base + system/env, profile highest priority. */
+    private Map<String, Map<String, String>> profileResolved;
+
+    @BeforeAll
+    void loadAllConfiguration() throws IOException {
+        Resource baseResource = resourceLoader.getResource("classpath:" + BASE_RESOURCE);
+        List<PropertySource<?>> baseSources = loadSources(BASE_RESOURCE, baseResource);
+        baseKeys = collectKeys(baseSources);
+
+        StandardEnvironment baseEnv = newEnvironment();
+        layerOnTop(baseEnv, baseSources);
+        baseResolved = resolveAll(baseEnv, baseKeys);
+
+        profiles = discoverProfiles();
+        profileKeys = new LinkedHashMap<>();
+        profileResolved = new LinkedHashMap<>();
+
+        for (String profile : profiles) {
+            String fileName = profileFileName(profile);
+            Resource profileResource = resourceLoader.getResource("classpath:" + fileName);
+            List<PropertySource<?>> profileSources = loadSources(fileName, profileResource);
+            Set<String> keys = collectKeys(profileSources);
+            profileKeys.put(profile, keys);
+
+            StandardEnvironment profileEnv = newEnvironment();
+            layerOnTop(profileEnv, baseSources);    // lower priority
+            layerOnTop(profileEnv, profileSources); // higher priority (layered on top of base)
+            profileResolved.put(profile, resolveAll(profileEnv, keys));
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // R1 — Every key in a profile file must exist in application.yml
+    // ------------------------------------------------------------------
+    @ParameterizedTest(name = "[R1] profile={0}")
+    @MethodSource("profileNames")
+    @DisplayName("R1: profile keys must exist in application.yml")
+    void r1_everyProfileKeyExistsInBase(String profile) {
+        String file = profileFileName(profile);
+        Map<String, String> resolvedForProfile = profileResolved.get(profile);
+        List<String> violations = new ArrayList<>();
+
+        for (String key : profileKeys.get(profile)) {
+            if (!baseKeys.contains(key)) {
+                violations.add("[R1] key present in profile file is missing from application.yml — "
+                        + "key=" + key + ", file=" + file + ", value=" + resolvedForProfile.get(key));
+            }
+        }
+
+        failIfAny(violations, "Profile files may only override values that already exist in the base "
+                + "application.yml; this keeps the full configuration surface discoverable from a "
+                + "single file.");
+    }
+
+    // ------------------------------------------------------------------
+    // R2 — Same resolved value in both files is a failure (duplication)
+    // ------------------------------------------------------------------
+    @ParameterizedTest(name = "[R2] profile={0}")
+    @MethodSource("profileNames")
+    @DisplayName("R2: profile must not duplicate a base value")
+    void r2_profileMustNotDuplicateBaseValue(String profile) {
+        String file = profileFileName(profile);
+        Map<String, String> resolvedForProfile = profileResolved.get(profile);
+        List<String> violations = new ArrayList<>();
+
+        for (String key : profileKeys.get(profile)) {
+            if (!baseKeys.contains(key)) {
+                continue; // already reported by R1
+            }
+            String baseValue = baseResolved.get(key);
+            String profileValue = resolvedForProfile.get(key);
+
+            if (Objects.equals(baseValue, profileValue)) {
+                violations.add("[R2] profile value is identical to the base (resolved) value — "
+                        + "key=" + key + ", file=" + file + ", value=" + profileValue);
+            }
+        }
+
+        failIfAny(violations, "Common values belong in application.yml only; repeating an identical "
+                + "resolved value in a profile file is redundant and invites silent drift if only one "
+                + "copy is later updated.");
+    }
+
+    // ------------------------------------------------------------------
+    // R3 — Profile files must not introduce keys absent from application.yml.
+    // Structurally the same check as R1 (confirmed by the worked example,
+    // which tags the same violation "R1 + R3"), kept as its own test/ID so
+    // both requirements are independently traceable in CI output.
+    // ------------------------------------------------------------------
+    @ParameterizedTest(name = "[R3] profile={0}")
+    @MethodSource("profileNames")
+    @DisplayName("R3: profile must not introduce new keys")
+    void r3_profileMustNotIntroduceNewKeys(String profile) {
+        String file = profileFileName(profile);
+        Map<String, String> resolvedForProfile = profileResolved.get(profile);
+        List<String> violations = new ArrayList<>();
+
+        for (String key : profileKeys.get(profile)) {
+            if (!baseKeys.contains(key)) {
+                violations.add("[R3] profile file introduces a key absent from application.yml — "
+                        + "key=" + key + ", file=" + file + ", value=" + resolvedForProfile.get(key));
+            }
+        }
+
+        failIfAny(violations, "New configuration surface must be declared in application.yml first so "
+                + "every possible key is visible in one place, even if its default is overridden per "
+                + "profile.");
+    }
+
+    // ------------------------------------------------------------------
+    // R4 — Every override must actually change the resolved value. Same
+    // comparison as R2, expressed as the positive requirement; kept as its
+    // own test/ID for the same traceability reason as R1/R3 above.
+    // ------------------------------------------------------------------
+    @ParameterizedTest(name = "[R4] profile={0}")
+    @MethodSource("profileNames")
+    @DisplayName("R4: every override must change the resolved value")
+    void r4_everyOverrideMustChangeValue(String profile) {
+        String file = profileFileName(profile);
+        Map<String, String> resolvedForProfile = profileResolved.get(profile);
+        List<String> violations = new ArrayList<>();
+
+        for (String key : profileKeys.get(profile)) {
+            if (!baseKeys.contains(key)) {
+                continue; // already reported by R1 / R3
+            }
+            String baseValue = baseResolved.get(key);
+            String profileValue = resolvedForProfile.get(key);
+
+            if (Objects.equals(baseValue, profileValue)) {
+                violations.add("[R4] key is present in both files but does not change the resolved value — "
+                        + "key=" + key + ", file=" + file + ", value=" + profileValue);
+            }
+        }
+
+        failIfAny(violations, "A key repeated in a profile file is only justified if it actually "
+                + "overrides the base behaviour; a no-op override is dead configuration.");
+    }
+
+    // ------------------------------------------------------------------
+    // R5 — A key belongs in application-{profile}.yml if and only if its
+    // value differs from application.yml: no same-value duplicates, no
+    // extra keys, only real overrides. Checked across all profiles at
+    // once in a single @Test, restating the R1–R4 invariants together
+    // as one comprehensive pass rather than comparing key sets between
+    // profiles (profiles are not required to override the same keys as
+    // each other — only to contain nothing but genuine overrides).
+    // ------------------------------------------------------------------
+    @Test
+    @DisplayName("R5: profile keys exist if and only if they override base")
+    void r5_profileKeysExistIfAndOnlyIfTheyOverrideBase() {
+        List<String> violations = new ArrayList<>();
+
+        for (String profile : profiles) {
+            String file = profileFileName(profile);
+            Map<String, String> resolvedForProfile = profileResolved.get(profile);
+
+            for (String key : profileKeys.get(profile)) {
+                if (!baseKeys.contains(key)) {
+                    violations.add("[R5] key does not belong in a profile file: absent from application.yml — "
+                            + "key=" + key + ", file=" + file + ", value=" + resolvedForProfile.get(key));
+                    continue; // nothing in base to compare this key's value against
+                }
+
+                String baseValue = baseResolved.get(key);
+                String profileValue = resolvedForProfile.get(key);
+                if (Objects.equals(baseValue, profileValue)) {
+                    violations.add("[R5] key does not belong in a profile file: value is identical to "
+                            + "application.yml — key=" + key + ", file=" + file + ", value=" + profileValue);
+                }
+            }
+        }
+
+        failIfAny(violations, "A key belongs in a profile file if and only if its resolved value differs "
+                + "from application.yml; keys with no base counterpart, or with an unchanged value, are "
+                + "not genuine overrides.");
+    }
+
+    // ------------------------------------------------------------------
+    // Support: discovery, loading, key/value resolution
+    // ------------------------------------------------------------------
+
+    /**
+     * Fails once, reporting every violation collected for this test invocation,
+     * instead of throwing on the first one found. Each entry in {@code violations}
+     * already follows the required "[R{n}] ... key=..., file=..., value=..." format;
+     * this just aggregates them into a single {@link AssertionFailureBuilder} report
+     * so a single test run surfaces the full picture. No-op if there are none.
+     */
+    private static void failIfAny(List<String> violations, String reason) {
+        if (violations.isEmpty()) {
+            return;
+        }
+        String message = violations.size() + " violation(s):\n  - " + String.join("\n  - ", violations);
+        AssertionFailureBuilder.assertionFailure()
+                .message(message)
+                .reason(reason)
+                .buildAndThrow();
+    }
+
+    /**
+     * Creates a {@link StandardEnvironment} configured for lenient placeholder
+     * resolution: by default, {@code Environment.getProperty(key)} resolves
+     * <em>nested</em> placeholders (e.g. a value like {@code ${docker.local.box}})
+     * using a STRICT resolver — {@code ignoreUnresolvableNestedPlaceholders}
+     * defaults to {@code false} — and throws {@code PlaceholderResolutionException}
+     * if the referenced key isn't defined anywhere in the environment (YAML, system
+     * properties, or OS environment variables). Real-world config commonly contains
+     * placeholders that are only ever supplied externally at actual runtime (CI
+     * variables, Docker-injected values, etc.) and are never meant to resolve during
+     * a structural test. Turning this flag on makes such a placeholder resolve to
+     * its own literal text instead of throwing, so the test can still compare it
+     * like any other value rather than failing the whole suite with a setup error.
+     */
+    private static StandardEnvironment newEnvironment() {
+        StandardEnvironment environment = new StandardEnvironment();
+        environment.setIgnoreUnresolvableNestedPlaceholders(true);
+        return environment;
+    }
+
+    /** Supplies profile names to the parameterized R1/R2/R3/R4 tests. */
+    Stream<String> profileNames() {
+        return profiles.stream();
+    }
+
+    private static String profileFileName(String profile) {
+        return "application-" + profile + ".yml";
+    }
+
+    /**
+     * Discovers profiles by scanning {@code classpath*:application-*.yml}. A missing
+     * profile file is simply never found here, which is how "skip silently" is
+     * satisfied for that edge case. Note: {@code classpath*:} scans every JAR on the
+     * classpath, so a dependency that happens to ship its own
+     * {@code application-<name>.yml} would also surface here — acceptable per the
+     * spec's explicit instruction to use {@code classpath*:}, but worth knowing.
+     */
+    private List<String> discoverProfiles() throws IOException {
+        PathMatchingResourcePatternResolver resolver = new PathMatchingResourcePatternResolver();
+        Resource[] resources = resolver.getResources("classpath*:application-*.yml");
+
+        List<String> found = new ArrayList<>();
+        for (Resource resource : resources) {
+            String filename = resource.getFilename();
+            if (filename == null) {
+                continue;
+            }
+            Matcher matcher = PROFILE_FILE_PATTERN.matcher(filename);
+            if (matcher.matches()) {
+                found.add(matcher.group(1));
+            }
+        }
+        Collections.sort(found);
+        return found;
+    }
+
+    /** Loads the property sources for one YAML file. Missing file -> empty list (skip silently). */
+    private List<PropertySource<?>> loadSources(String name, Resource resource) throws IOException {
+        if (!resource.exists()) {
+            return Collections.emptyList();
+        }
+        return loader.load(name, resource);
+    }
+
+    /**
+     * Adds {@code sources} to {@code environment} above whatever is already
+     * registered. Within a single call, later entries in {@code sources} end up
+     * with the highest priority (matches Spring's "later document wins" semantics
+     * for multi-document YAML files). Calling this multiple times layers each
+     * subsequent call's sources on top of the previous ones.
+     */
+    private static void layerOnTop(StandardEnvironment environment, List<PropertySource<?>> sources) {
+        for (PropertySource<?> source : sources) {
+            environment.getPropertySources().addFirst(source);
+        }
+    }
+
+    /**
+     * Unions property names across all sources. {@code null}/{@code ~}/empty leaves
+     * are intentionally NOT filtered out here — see the class Javadoc for why: Spring
+     * flattens them to {@code ""} regardless, and treating that as a normal value
+     * (rather than excluding the key) is what allows a profile file to legitimately
+     * override a base-file placeholder.
+     */
+    private static Set<String> collectKeys(List<PropertySource<?>> sources) {
+        Set<String> keys = new LinkedHashSet<>();
+        for (PropertySource<?> source : sources) {
+            if (source instanceof EnumerablePropertySource<?> enumerable) {
+                Collections.addAll(keys, enumerable.getPropertyNames());
+            }
+        }
+        return keys;
+    }
+
+    /**
+     * Resolves each key's final value via the Environment (unwraps origin-tracking,
+     * resolves {@code ${...}} placeholders, converts non-string scalars to String) —
+     * deliberately not done by hand against raw property-source values.
+     */
+    private static Map<String, String> resolveAll(StandardEnvironment environment, Set<String> keys) {
+        Map<String, String> resolved = new LinkedHashMap<>();
+        for (String key : keys) {
+            resolved.put(key, environment.getProperty(key));
+        }
+        return resolved;
+    }
+}
+
