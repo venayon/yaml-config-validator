@@ -1,0 +1,53 @@
+package com.example.notification.config;
+
+import org.springframework.boot.context.properties.ConfigurationProperties;
+import org.springframework.stereotype.Component;
+
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.Map;
+
+/**
+ * Binds the entire `template-id.*` subtree into a Map once at startup.
+ *
+ * Lookup is O(1) — no Environment.getProperty calls in hot paths.
+ */
+@Component
+@ConfigurationProperties(prefix = "template-id")
+public class TemplateIdProperties {
+
+    /** Key = logical name (e.g. "welcome-email"), value = template ID. */
+    private Map<String, String> templates = new HashMap<>();
+
+    public Map<String, String> getTemplates() {
+        return Collections.unmodifiableMap(templates);
+    }
+
+    public void setTemplates(Map<String, String> templates) {
+        this.templates = templates != null ? templates : new HashMap<>();
+    }
+
+    /**
+     * O(1) lookup. Throws if the template is not configured — fail fast
+     * rather than silently sending a null template ID.
+     */
+    public String get(String name) {
+        String value = templates.get(name);
+        if (value == null) {
+            throw new IllegalArgumentException(
+                    "Unknown template-id: '" + name + "'. " +
+                    "Available: " + templates.keySet());
+        }
+        return value;
+    }
+
+    /** O(1) lookup with fallback. Use when a missing key is acceptable. */
+    public String getOrDefault(String name, String fallback) {
+        return templates.getOrDefault(name, fallback);
+    }
+
+    /** O(1) existence check. */
+    public boolean has(String name) {
+        return templates.containsKey(name);
+    }
+}
